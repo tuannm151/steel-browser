@@ -26,12 +26,12 @@ jobs:
 
       - name: Build and push the latest Steel Browser image
         run: |
-          docker buildx build --platform linux/amd64,linux/arm64 --push -t ghcr.io/steel-dev/steel-browser:latest .
+          docker buildx build --platform linux/amd64,linux/arm64 --push -t ghcr.io/${{ github.repository }}:latest .
 
       - name: Build and push the latest Steel Browser API image
         run: |
-          docker buildx build --platform linux/amd64,linux/arm64 --push -t ghcr.io/steel-dev/steel-browser-api:latest . -f ./api/Dockerfile
+          docker buildx build --platform linux/amd64,linux/arm64 --push -t ghcr.io/${{ github.repository }}-api:latest . -f ./api/Dockerfile
 
       - name: Build and push the latest Steel Browser UI image
         run: |
-          docker buildx build --platform linux/amd64,linux/arm64 --push -t ghcr.io/steel-dev/steel-browser-ui:latest . -f ./ui/Dockerfile
+          docker buildx build --platform linux/amd64,linux/arm64 --push -t ghcr.io/${{ github.repository }}-ui:latest . -f ./ui/Dockerfile

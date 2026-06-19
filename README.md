@@ -88,7 +88,7 @@ The simplest way to deploy/run a Steel browser instance locally is to run the pr
 
 ```bash
 # Pull and run the Docker image
-docker run -p 3000:3000 -p 9223:9223 ghcr.io/steel-dev/steel-browser
+docker run -p 3000:3000 -p 9223:9223 ghcr.io/tuannm151/steel-browser
 ```
 
 This will start the Steel browser server on port 3000 (http://localhost:3000) and the UI at http://localhost:3000/ui. The 9223 port is used for the console debugger.

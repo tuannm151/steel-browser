@@ -1,6 +1,6 @@
 services:
   api:
-    image: ghcr.io/steel-dev/steel-browser-api:latest
+    image: ghcr.io/tuannm151/steel-browser-api:latest
     ports:
       - "3000:3000"
       - "9223:9223"
@@ -17,7 +17,7 @@ services:
       - steel-network
 
   ui:
-    image: ghcr.io/steel-dev/steel-browser-ui:latest
+    image: ghcr.io/tuannm151/steel-browser-ui:latest
     ports:
       - "5173:80"
     environment:
