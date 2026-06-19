@@ -192,10 +192,6 @@ export class CDPService extends EventEmitter {
     return this.logger.child({ component: name });
   }
 
-  public setChromeExecPath(execPath: string): void {
-    this.chromeExecPath = execPath;
-  }
-
   public setProxyWebSocketHandler(
     handler: ((req: IncomingMessage, socket: Duplex, head: Buffer) => Promise<void>) | null,
   ): void {
@@ -359,10 +355,8 @@ export class CDPService extends EventEmitter {
           await page.setExtraHTTPHeaders(env.DEFAULT_HEADERS);
         }
 
-        await this.applyDeviceMetricsOverride(page);
-
         // Inject fingerprint only if it's not skipped
-        if (!env.SKIP_FINGERPRINT_INJECTION && !this.launchConfig?.skipFingerprintInjection) {
+        if (!env.SKIP_FINGERPRINT_INJECTION) {
           // Use our safer fingerprint injection method instead of FingerprintInjector
           await this.injectFingerprintSafely(page, this.fingerprintData);
           this.logger.debug("[CDPService] Injected fingerprint into page");
@@ -707,8 +701,55 @@ export class CDPService extends EventEmitter {
                 };
               }
 
-              const fingerprintGen = new FingerprintGenerator(fingerprintOptions);
-              this.fingerprintData = fingerprintGen.getFingerprint();
+              // The bundled fingerprint-generator dataset does not always have
+              // samples for the newest Chrome at the requested screen box (e.g.
+              // Chrome 146 has none at a fixed 1920x1080), which makes
+              // getFingerprint() throw and fails the entire browser launch.
+              // Retry with progressively older minVersions so a missing newest
+              // sample degrades to a slightly older real fingerprint instead of
+              // a hard launch failure.
+              const requestedBrowser = fingerprintOptions.browsers?.[0];
+              const requestedMinVersion =
+                requestedBrowser && typeof requestedBrowser === "object"
+                  ? requestedBrowser.minVersion
+                  : undefined;
+              const minVersionFallbacks = [
+                requestedMinVersion,
+                ...[144, 140, 136, undefined].filter(
+                  (version) =>
+                    requestedMinVersion === undefined ||
+                    version === undefined ||
+                    version < requestedMinVersion,
+                ),
+              ];
+
+              let lastError: unknown;
+              for (const minVersion of minVersionFallbacks) {
+                const attemptOptions =
+                  fingerprintOptions.browsers && minVersion !== undefined
+                    ? {
+                        ...fingerprintOptions,
+                        browsers: [{ name: "chrome", minVersion }],
+                      }
+                    : fingerprintOptions;
+                try {
+                  this.fingerprintData = new FingerprintGenerator(
+                    attemptOptions,
+                  ).getFingerprint();
+                  if (minVersion !== requestedMinVersion) {
+                    this.logger.warn(
+                      `[CDPService] No fingerprint sample for the requested Chrome version; fell back to minVersion ${minVersion ?? "any"}`,
+                    );
+                  }
+                  lastError = undefined;
+                  break;
+                } catch (generationError) {
+                  lastError = generationError;
+                }
+              }
+              if (lastError) {
+                throw lastError;
+              }
             },
             (error) => {
               this.logger.error({ err: error }, "[CDPService] Error generating fingerprint");
@@ -772,6 +813,12 @@ export class CDPService extends EventEmitter {
           const validatedTimezone = await executeOptional(
             this.logger,
             async () => {
+              if (this.launchConfig?.skipFingerprintInjection) {
+                this.logger.info(
+                  `Skipping timezone validation as skipFingerprintInjection is enabled`,
+                );
+                return this.defaultTimezone;
+              }
               const tz = await validateTimezone(this.logger, config.timezone!);
               this.logger.info(`Resolved and validated timezone: ${tz}`);
               return tz;
@@ -1410,12 +1457,33 @@ export class CDPService extends EventEmitter {
       // TypeScript fix - access userAgent through navigator property
       const userAgent = fingerprint.navigator.userAgent;
       const userAgentMetadata = fingerprint.navigator.userAgentData;
+      const { screen } = fingerprint;
 
       await page.setUserAgent(userAgent);
 
       const session = await page.createCDPSession();
 
       try {
+        await session.send("Page.setDeviceMetricsOverride", {
+          screenHeight: screen.height,
+          screenWidth: screen.width,
+          width: screen.width,
+          height: screen.height,
+          viewport: {
+            width: screen.availWidth,
+            height: screen.availHeight,
+            scale: 1,
+            x: 0,
+            y: 0,
+          },
+          mobile: /phone|android|mobile/i.test(userAgent),
+          screenOrientation:
+            screen.height > screen.width
+              ? { angle: 0, type: "portraitPrimary" }
+              : { angle: 90, type: "landscapePrimary" },
+          deviceScaleFactor: screen.devicePixelRatio,
+        });
+
         const injectedHeaders = filterHeaders(headers);
 
         await page.setExtraHTTPHeaders(injectedHeaders);
@@ -1469,37 +1537,6 @@ export class CDPService extends EventEmitter {
       const fingerprintInjector = new FingerprintInjector();
       // @ts-ignore - Ignore type mismatch between puppeteer versions
       await fingerprintInjector.attachFingerprintToPuppeteer(page, fingerprintData);
-    }
-  }
-
-  @traceable
-  private async applyDeviceMetricsOverride(page: Page): Promise<void> {
-    const screen = this.fingerprintData?.fingerprint?.screen;
-    if (!screen) {
-      this.logger.warn(
-        "[CDPService] No fingerprint screen data available, skipping Page.setDeviceMetricsOverride",
-      );
-      return;
-    }
-
-    const userAgent = this.getUserAgent() ?? "";
-    const session = await page.createCDPSession();
-    try {
-      await session.send("Page.setDeviceMetricsOverride", {
-        screenWidth: screen.width,
-        screenHeight: screen.height,
-        width: screen.width,
-        height: screen.height,
-        viewport: { width: screen.availWidth, height: screen.availHeight, scale: 1, x: 0, y: 0 },
-        mobile: /phone|android|mobile/i.test(userAgent),
-        screenOrientation:
-          screen.height > screen.width
-            ? { angle: 0, type: "portraitPrimary" }
-            : { angle: 90, type: "landscapePrimary" },
-        deviceScaleFactor: screen.devicePixelRatio,
-      });
-    } finally {
-      await session.detach().catch(() => {});
     }
   }
 
